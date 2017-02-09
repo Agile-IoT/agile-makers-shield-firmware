@@ -1,4 +1,4 @@
-
+ 
 /***********************************************************
  *               ATMega Serial-to-I2C                     *
  *                                                        *
@@ -21,12 +21,17 @@
 /*** ATMega ***/
 #define SLAVE_ADDRESS 0x14
 #define I2C_SIZE 256
+#define CHUNK_SIZE 128
 #define TX_BUFFER_SIZE 512
 #define RX_BUFFER_SIZE 1024
-#define CHUNK_SIZE 128
+#define GPS_BUFFER_SIZE 128
+#define PIN_ENABLE_UART_0 22
+#define PIN_ENABLE_UART_1 23
 #define PIN_BUTTON_0 70
+#define PIN_INT_0 6
 #define PIN_BUTTON_1 71
-#define PIN_INT 3
+#define PIN_INT_1 7
+#define PIN_ISR 3
 
 /*** Functions ***/
 #define MASK_SOCKET(x) ((x >> 4) & 0x0F)
@@ -36,10 +41,11 @@
 /*** Sockets ***/
 #define SOCKET_0 0
 #define SOCKET_1 1
-#define UART_0 Serial
-#define UART_EVENT_0 serialEvent
+#define UART_0 Serial3
+#define UART_EVENT_0 serialEvent3
 #define UART_1 Serial1
 #define UART_EVENT_1 serialEvent1
+#define UART_GPS Serial2
 
 /*** I2C Addresses ***/
 #define FIFO_TX 0x00
@@ -70,6 +76,8 @@
 // UART status
 #define MODE_OFF 0
 #define MODE_ON 1
+// OTHER
+#define DELAY_10MS 10
 
 /*** UART config ***/
 #define UART_DATABITS_5 0x00
@@ -81,11 +89,17 @@
 #define UART_PARITY_NONE 0x00
 #define UART_PARITY_EVEN 0x20
 #define UART_PARITY_ODD 0x30
+
+/*** GPS ***/
+#define GPS_HEADER_SIZE 6
+#define GPS_TYPE_NONE 0
+#define GPS_TYPE_GGA 1
+#define GPS_TYPE_RMC 2
 /* ------------------------------------------------------ */
 
 
 /* --- VARIABLES ---------------------------------------- */
-/* I2C ***/
+/*** I2C ***/
 volatile uint8_t i2cMem[I2C_SIZE];
 uint8_t i2cPointer = 0x00;
 uint8_t returnType = BYTE;
@@ -101,6 +115,9 @@ uint8_t txBuffer1[TX_BUFFER_SIZE];
 volatile uint8_t rxBuffer1[RX_BUFFER_SIZE];
 volatile uint16_t stackPointer1 = 0 ;
 volatile uint16_t readPointer1 = 0;
+// Buffer GPS
+uint8_t gpsBufferGGA[GPS_BUFFER_SIZE];
+uint8_t gpsBufferRMC[GPS_BUFFER_SIZE];
 
 /*** UART Defaults ***/
 uint8_t defBaudrate3 = 0x00; // 0x00002580 = 9600
@@ -110,6 +127,12 @@ uint8_t defBaudrate0 = 0x80;
 uint8_t defDatabits = UART_DATABITS_8;
 uint8_t defStopbits = UART_STOPBITS_1;
 uint8_t defParity = UART_PARITY_NONE;
+
+/*** GPS ***/
+const PROGMEM char GPS_set_baudrate[] = {"$PMTK251,115200*1F\r\n"};
+const PROGMEM char GPS_set_NMEA_sentences[] = {"$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"};
+const PROGMEM char GPS_GGA = {"$GPGGA"};
+const PROGMEM char GPS_RMC = {"$GPRMC"};
 /* ------------------------------------------------------ */
 
 
@@ -121,39 +144,20 @@ uint8_t defParity = UART_PARITY_NONE;
  */
 void setup () {
 
-   //TODO: Hardcoded
-   pinMode(23, OUTPUT);
-   digitalWrite(23, HIGH);
-   pinMode(22, OUTPUT);
-   digitalWrite(22, HIGH);
+   // Initialize Buffer 0
+   memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
+   memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
 
-   pinMode(72, OUTPUT);
-   digitalWrite(72, HIGH);
+   // Initialize Buffer 1
+   memset(txBuffer1, 0x00, TX_BUFFER_SIZE);
+   memset(rxBuffer1, 0x00, RX_BUFFER_SIZE);
 
-   // Initialize TX Buffer 0
-   for (int i = 0; i < TX_BUFFER_SIZE; i++) {
-      txBuffer0[i] = 0x00;
-   }
-
-   // Initialize RX Buffer 0
-   for (int i = 0; i < RX_BUFFER_SIZE; i++) {
-      rxBuffer0[i] = 0x00;
-   }
-
-   // Initialize TX Buffer 1
-   for (int i = 0; i < TX_BUFFER_SIZE; i++) {
-      txBuffer1[i] = 0x00;
-   }
-
-   // Initialize RX Buffer 1
-   for (int i = 0; i < RX_BUFFER_SIZE; i++) {
-      rxBuffer1[i] = 0x00;
-   }
+   // Initialize GPS Buffers
+   memset(gpsBufferGGA, 0x00, GPS_BUFFER_SIZE);
+   memset(gpsBufferRMC, 0x00, GPS_BUFFER_SIZE);
    
    // Initialize the I2C memory
-   for (int i = 0; i < I2C_SIZE; i++) {
-      i2cMem[i] = 0x00; 
-   }
+   memset(i2cMem, 0x00, I2C_SIZE);
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_3)] = defBaudrate3;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_2)] = defBaudrate2;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_1)] = defBaudrate1;
@@ -179,15 +183,25 @@ void setup () {
    Wire.onRequest(sendData);
 
    // Initialize pins
-   pinMode(PIN_BUTTON_0, INPUT_PULLUP);
-   attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_0), buttonEvent0, FALLING);
-   pinMode(PIN_BUTTON_1, INPUT_PULLUP);
-   attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_1), buttonEvent1, FALLING);
-   pinMode(PIN_INT, OUTPUT);
-   digitalWrite(PIN_INT, LOW);
+   pinMode(PIN_ENABLE_UART_0, OUTPUT);
+   pinMode(PIN_ENABLE_UART_0, OUTPUT);
+   pinMode(PIN_BUTTON_0, INPUT);
+   attachInterrupt(PIN_INT_0, buttonEvent0, RISING);
+   pinMode(PIN_BUTTON_1, INPUT);
+   attachInterrupt(PIN_INT_1, buttonEvent1, FALLING);
+   pinMode(PIN_ISR, OUTPUT);
+   digitalWrite(PIN_ISR, LOW);
 
-   //Serial.begin(9600); //TODO: Delete this
-   //Serial2.begin(9600);
+   // Initialize GPS
+   UART_GPS.begin(9600);
+   delay(DELAY_10MS);
+   UART_GPS.write(GPS_set_baudrate);
+   delay(DELAY_10MS);
+   UART_GPS.end();
+   delay(DELAY_10MS);
+   UART_GPS.begin(115200);
+   delay(DELAY_10MS);
+   UART_GPS.write(GPS_set_NMEA_sentences);
    
 }
 
@@ -199,9 +213,6 @@ void setup () {
 void loop () {
 
    // Do nothing
-   //if (Serial2.available()) { //TODO: Delete this
-   //   Serial.write(Serial2.read());
-   //}
 
 }
 
@@ -258,7 +269,7 @@ void receiveData (int byteCount) {
                    (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
                    (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
                    (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
-               digitalWrite(PIN_INT, LOW);
+               digitalWrite(PIN_ISR, LOW);
             }
             break;
          default:
@@ -369,7 +380,7 @@ void sendData () {
             i2cMem[MASK_FULL(SOCKET_0, FIFO_TO_READ_LOW)] = availData & 0xFF;
             if (availData > 0 ) {
                i2cMem[MASK_FULL(SOCKET_0, INT_UART)] = 0x01;
-               digitalWrite(PIN_INT, HIGH);
+               digitalWrite(PIN_ISR, HIGH);
             }
          }
          if (socket == SOCKET_1) {
@@ -446,22 +457,19 @@ void updateUART (uint8_t socket, uint8_t mode) {
    if (socket == SOCKET_0) {
        // Close the SOCKET_0
        UART_0.end();
+       digitalWrite(PIN_ENABLE_UART_0, LOW);
        // Clean interrupts
        i2cMem[MASK_FULL(socket, INT_UART)] = 0x00;
        if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
              (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
              (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
              (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
-          digitalWrite(PIN_INT, LOW);
+          digitalWrite(PIN_ISR, LOW);
        }
        // Initialize TX Buffer 0
-       for (int i = 0; i < TX_BUFFER_SIZE; i++) {
-          txBuffer0[i] = 0x00;
-       }
+       memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
        // Initialize RX Buffer 0
-       for (int i = 0; i < RX_BUFFER_SIZE; i++) {
-          rxBuffer0[i] = 0x00;
-       }
+       memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
        stackPointer0 = 0;
        readPointer0 = 0;
        // Reset the available data
@@ -471,6 +479,7 @@ void updateUART (uint8_t socket, uint8_t mode) {
        i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 0x00;
       if (mode == MODE_ON) {
          // Open the SOCKET_0
+         digitalWrite(PIN_ENABLE_UART_0, HIGH);
          UART_0.begin(baudrate, config);
          i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_ON;
       }
@@ -479,22 +488,19 @@ void updateUART (uint8_t socket, uint8_t mode) {
    if (socket == SOCKET_1) {
       // Close the SOCKET_1
       UART_1.end();
+      digitalWrite(PIN_ENABLE_UART_1, LOW);
       // Clean interrupts
       i2cMem[MASK_FULL(socket, INT_UART)] = 0x00;
       if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
             (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
             (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
             (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
-         digitalWrite(PIN_INT, LOW);
+         digitalWrite(PIN_ISR, LOW);
       }
       // Initialize TX Buffer 1
-      for (int i = 0; i < TX_BUFFER_SIZE; i++) {
-         txBuffer1[i] = 0x00;
-      }
+      memset(txBuffer1, 0x00, TX_BUFFER_SIZE);
       // Initialize RX Buffer 1
-      for (int i = 0; i < RX_BUFFER_SIZE; i++) {
-         rxBuffer1[i] = 0x00;
-      }
+      memset(rxBuffer1, 0x00, RX_BUFFER_SIZE);
       stackPointer1 = 0;
       readPointer1 = 0;
       // Reset the available data
@@ -504,6 +510,7 @@ void updateUART (uint8_t socket, uint8_t mode) {
       i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 0x00;
       if (mode == MODE_ON) {
          // Open the SOCKET_1
+         digitalWrite(PIN_ENABLE_UART_1, HIGH);
          UART_1.begin(baudrate, config);
          i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_ON;
       }
@@ -532,7 +539,7 @@ void UART_EVENT_0 () {
          }
          // Guard to avoid multiple events for a single transmission
          if (UART_0.available() == 0) {
-            delay(1);
+            delay(DELAY_10MS);
          }
       }
       // Update the available data
@@ -545,7 +552,7 @@ void UART_EVENT_0 () {
       i2cMem[MASK_FULL(SOCKET_0, FIFO_AVAILABLE_LOW)] = availData & 0xFF;
       // Update the interruption flag
       i2cMem[MASK_FULL(SOCKET_0, INT_UART)] = 0x01;
-      digitalWrite(PIN_INT, HIGH); //TODO: Maybe -> write(HIGH); delay(x); write(LOW);
+      digitalWrite(PIN_ISR, HIGH); //TODO: Maybe -> write(HIGH); delay(x); write(LOW);
    
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
     
@@ -572,7 +579,7 @@ void UART_EVENT_1 () {
          }
          // Guard to avoid multiple events for a single transmission
          if (UART_1.available() == 0) {
-            delay(1);
+            delay(DELAY_10MS);
          }
       }
       // Update the available data
@@ -585,7 +592,7 @@ void UART_EVENT_1 () {
       i2cMem[MASK_FULL(SOCKET_1, FIFO_AVAILABLE_LOW)] = availData & 0xFF;
       // Update the interruption flag
       i2cMem[MASK_FULL(SOCKET_1, INT_UART)] = 0x01;
-      digitalWrite(PIN_INT, HIGH);
+      digitalWrite(PIN_ISR, HIGH);
       
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
     
@@ -633,7 +640,7 @@ void sendToUART (uint8_t socket) {
 void buttonEvent0 () {
 
    i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] = 0x01;
-   digitalWrite(PIN_INT, HIGH);
+   digitalWrite(PIN_ISR, HIGH);
    
 }
 
@@ -644,8 +651,92 @@ void buttonEvent0 () {
 void buttonEvent1 () {
 
    i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] = 0x01;
-   digitalWrite(PIN_INT, HIGH);
+   digitalWrite(PIN_ISR, HIGH);
 
+}
+
+/*
+ *  Function: getGPS
+ *  Gets the last data from the GPS and stores it in a buffer
+ */
+void updateGPS() {
+
+   uint8_t data;
+   uint16_t pointer = 0;
+   uint8_t frameStart[GPS_HEADER_SIZE];
+   uint8_t frameType = GPS_TYPE_NONE;
+
+   // Clean the GPS buffers
+   memset(gpsBufferGGA, 0x00, GPS_BUFFER_SIZE);
+   memset(gpsBufferRMC, 0x00, GPS_BUFFER_SIZE);
+
+   // Flush all the previous data
+   UART_GPS.flush();
+
+   // Wait till new data
+   while (UART_GPS.available() <= 0) {
+      delay(DELAY_10MS);
+   }
+
+   // Read the data
+   while ((UART_GPS.available() > 0) && (pointer < GPS_BUFFER_SIZE)) {
+      data = UART_GPS.read();
+      // If the char is "$", "\r" or "\n", the frame restarts
+      if ((data == "$") or (data == "\r") or (data == "\n")) {
+         pointer = 0;
+         frameType = GPS_TYPE_NONE;
+      }
+      // Decide the action depending on the pointer
+      if ((pointer > 0) and (pointer < GPS_HEADER_SIZE)) {
+         // Waiting for type of frame
+         frameStart[pointer] = data;
+         pointer++;
+      } else if (pointer == GPS_HEADER_SIZE) {
+         // Check type of frame
+         if (strcmp(frameType, GPS_GGA)) {
+            //TODO: Copy start in frame
+            frameType = GPS_TYPE_GGA;
+            gpsBufferGGA[pointer] = data;
+            pointer++;
+         } else if (strcmp(frameType, GPS_RMC)) {
+            //TODO: Copy start in frame
+            frameType = GPS_TYPE_RMC;
+            gpsBufferRMC[pointer] = data;
+            pointer++;
+         } else {
+            pointer = 0;
+         }
+      } else if (pointer > GPS_HEADER_SIZE) {
+         // Fill the frame
+         if (pointer < GPS_BUFFER_SIZE) {
+            switch (frameType) {
+               case GPS_TYPE_GGA:
+                  gpsBufferGGA[pointer] = data;
+                  pointer++;
+                  break;
+               case GPS_TYPE_RMC:
+                  gpsBufferRMC[pointer] = data;
+                  pointer++;
+                  break;
+               case GPS_TYPE_NONE:
+               default:
+                  pointer = 0;
+                  break;
+            }
+         }
+      } else {
+         // Waiting for start of frame
+         if (data == "$") {
+            frameStart[pointer] = data;
+            pointer++;
+         }
+      }
+      // Guard to avoid multiple events for a single transmission
+      if (UART_GPS.available() == 0) {
+         delay(DELAY_10MS);
+      }
+   }
+   
 }
 /* ------------------------------------------------------ */
 
