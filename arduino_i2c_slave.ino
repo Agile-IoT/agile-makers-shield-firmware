@@ -23,8 +23,8 @@
 #define I2C_SIZE 256
 #define CHUNK_SIZE 128
 #define TX_BUFFER_SIZE 512
-#define RX_BUFFER_SIZE 768 //TODO: Change to 1024 when no memory problems
-#define GPS_BUFFER_SIZE 128
+#define RX_BUFFER_SIZE 1024 //TODO: Change to 1024 when no memory problems
+#define GPS_BUFFER_SIZE 128 // This has to be less or equal to CHUNK_SIZE
 #define PIN_ENABLE_UART_0 22
 #define PIN_ENABLE_UART_1 23
 #define PIN_BUTTON_0 70
@@ -41,6 +41,7 @@
 /*** Sockets ***/
 #define SOCKET_0 0
 #define SOCKET_1 1
+#define SOCKET_GPS 2
 #define UART_0 Serial3
 #define UART_EVENT_0 serialEvent3
 #define UART_1 Serial1
@@ -64,6 +65,9 @@
 #define SOCKET_STATUS 0x0D
 #define INT_UART 0x0E
 #define INT_BUTTON 0x0F
+#define GPS_UPDATE 0x00
+#define GPS_READ_GGA 0x01
+#define GPS_READ_RMC 0x02
 
 /*** Other definitions ***/
 // Type of the data sent to the I2C master
@@ -129,6 +133,7 @@ uint8_t defStopbits = UART_STOPBITS_1;
 uint8_t defParity = UART_PARITY_NONE;
 
 /*** GPS ***/
+boolean gpsRequest = false;
 const PROGMEM char GPS_set_baudrate[] = "$PMTK251,115200*1F\r\n"; // Baudrate = 115200
 const PROGMEM char GPS_set_NMEA_sentences[] = "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"; // GGCA and RMC
 const PROGMEM char GPS_set_update_time[] = "$PMTK220,1000*1F\r\n"; // One second between updates
@@ -210,14 +215,14 @@ void setup () {
    // Initialize GPS
    UART_GPS.begin(9600);
    delay(DELAY_10MS);
-   for (int i = 0; i < strlen_P(GPS_set_baudrate); i++) {
-      UART_GPS.write(pgm_read_byte_near(GPS_set_baudrate + i));
-   }
-   delay(DELAY_10MS);
-   UART_GPS.end();
-   delay(DELAY_10MS);
-   UART_GPS.begin(115200);
-   delay(DELAY_10MS);
+   //for (int i = 0; i < strlen_P(GPS_set_baudrate); i++) {
+   //   UART_GPS.write(pgm_read_byte_near(GPS_set_baudrate + i));
+   //}
+   //delay(DELAY_10MS);
+   //UART_GPS.end();
+   //delay(DELAY_10MS);
+   //UART_GPS.begin(115200);
+   //delay(DELAY_10MS);
    for (int i = 0; i < strlen_P(GPS_set_NMEA_sentences); i++) {
       UART_GPS.write(pgm_read_byte_near(GPS_set_NMEA_sentences + i));
    }
@@ -226,7 +231,7 @@ void setup () {
       UART_GPS.write(pgm_read_byte_near(GPS_set_update_time + i));
    }
 
-   Serial.begin(9600); //TODO: Delete this   
+   //Serial.begin(9600); //TODO: Delete this   
    
 }
 
@@ -237,18 +242,10 @@ void setup () {
  */
 void loop () {
 
-   // Do nothing
-   updateGPS();
-   Serial.println();
-   Serial.print(F("SRAM: "));
-   Serial.println(getFreeSram());
-   Serial.print(F("GGA: "));
-   Serial.write(gpsBufferGGA, sizeof(gpsBufferGGA));
-   Serial.println();
-   Serial.print(F("RMC: "));
-   Serial.write(gpsBufferRMC, sizeof(gpsBufferRMC));
-   Serial.println();
-   delay(5000);
+   if (gpsRequest == true) {
+      updateGPS();
+      gpsRequest = false;
+   }
 
 }
 
@@ -269,114 +266,144 @@ void receiveData (int byteCount) {
    rxData = Wire.read();
    socket = MASK_SOCKET(rxData);
 
-   // Type of request
-   if (byteCount == 1) {
-      // Read request
-      switch (MASK_ADDRESS(rxData)) {
-         case FIFO_RX:    
-            returnType = ARRAY;
-            i2cPointer = rxData;
-            break;
-         case SOCKET_BAUDRATE_3:
-            returnType = DWORD;
-            i2cPointer = rxData;
-            break;
-         case FIFO_AVAILABLE_HIGH:
-            // Copy FIFO_AVAILABLE to FIFO_TO_READ in case 
-            // it changes while requesting a read
-            i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 
-                  i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_HIGH)];
-            i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 
-                  i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)];
-            returnType = WORD;
-            i2cPointer = MASK_FULL(socket, FIFO_TO_READ_HIGH);
-            break;
-         case INT_BUTTON:
-         case INT_UART:
-            if (i2cMem[rxData] == 0x01) {
-               // Clean the interruption
-               i2cMem[rxData] = 0x00;
+   if (socket == SOCKET_GPS) {
+      //Type of request
+      if (byteCount == 1) {
+         // Read request
+         switch (MASK_ADDRESS(rxData)) {
+            case GPS_READ_GGA:
+            case GPS_READ_RMC:
+               returnType = ARRAY;
+               i2cPointer = rxData;
+               break;
+            default:
+               returnType = BYTE;
+               i2cPointer = rxData;
+               break;  
+         }
+      } else {
+         // Write request
+         returnType = FAIL;
+         switch (MASK_ADDRESS(rxData)) {
+            case GPS_UPDATE:
+               gpsRequest = true;
                returnType = SUCCESS;
-            } else {
-               returnType = FAIL;
-            }
-            // Clean the pin
-            if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
-                   (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
-                   (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
-                   (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
-               digitalWrite(PIN_ISR, LOW);
-            }
-            break;
-         default:
-            returnType = BYTE;
-            i2cPointer = rxData;
-            break;
-      }   
+               break;
+            default:
+               break;
+         }
+      }
    } else {
-      // Write request
-      returnType = FAIL;
-      switch (MASK_ADDRESS(rxData)) {
-         case FIFO_TX:
-            sendToUART(socket);
-            returnType = SUCCESS;
-            break;
-         case SOCKET_STATUS:
-            if (Wire.available()) {
-               rxDataWriteLow = Wire.read();
-               updateUART(socket, rxDataWriteLow);
+      // Type of request
+      if (byteCount == 1) {
+         // Read request
+         switch (MASK_ADDRESS(rxData)) {
+            case FIFO_RX:    
+               returnType = ARRAY;
+               i2cPointer = rxData;
+               break;
+            case SOCKET_BAUDRATE_3:
+               returnType = DWORD;
+               i2cPointer = rxData;
+               break;
+            case FIFO_AVAILABLE_HIGH:
+               // Copy FIFO_AVAILABLE to FIFO_TO_READ in case 
+               // it changes while requesting a read
+               i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 
+                     i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_HIGH)];
+               i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 
+                     i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)];
+               returnType = WORD;
+               i2cPointer = MASK_FULL(socket, FIFO_TO_READ_HIGH);
+               break;
+            case INT_BUTTON:
+            case INT_UART:
+               if (i2cMem[rxData] == 0x01) {
+                  // Clean the interruption
+                  i2cMem[rxData] = 0x00;
+                  returnType = SUCCESS;
+               } else {
+                  returnType = FAIL;
+               }
+               // Clean the pin
+               if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
+                      (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
+                      (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
+                      (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
+                  digitalWrite(PIN_ISR, LOW);
+               }
+               break;
+            default:
+               returnType = BYTE;
+               i2cPointer = rxData;
+               break;
+         }   
+      } else {
+         // Write request
+         returnType = FAIL;
+         switch (MASK_ADDRESS(rxData)) {
+            case FIFO_TX:
+               sendToUART(socket);
                returnType = SUCCESS;
-            }
-            break;
-         case SOCKET_BAUDRATE_3:
-            if (Wire.available() > 3) {
-               for (int i = 0; i < 4; i++) {
+               break;
+            case SOCKET_STATUS:
+               if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
-                  i2cMem[rxData + i] = rxDataWriteLow;
+                  updateUART(socket, rxDataWriteLow);
                   returnType = SUCCESS;
                }
-            }     
-            break;
-         case SOCKET_DATABITS:
-            if (Wire.available()) {
-               rxDataWriteLow = Wire.read();
-               if (rxDataWriteLow == UART_DATABITS_5 || 
-                   rxDataWriteLow == UART_DATABITS_6 ||
-                   rxDataWriteLow == UART_DATABITS_7 ||
-                   rxDataWriteLow == UART_DATABITS_8) {
-                  i2cMem[rxData] = rxDataWriteLow;   
-                  returnType = SUCCESS;
+               break;
+            case SOCKET_BAUDRATE_3:
+               if (Wire.available() > 3) {
+                  for (int i = 0; i < 4; i++) {
+                     rxDataWriteLow = Wire.read();
+                     i2cMem[rxData + i] = rxDataWriteLow;
+                     returnType = SUCCESS;
+                  }
+               }     
+               break;
+            case SOCKET_DATABITS:
+               if (Wire.available()) {
+                  rxDataWriteLow = Wire.read();
+                  if (rxDataWriteLow == UART_DATABITS_5 || 
+                      rxDataWriteLow == UART_DATABITS_6 ||
+                      rxDataWriteLow == UART_DATABITS_7 ||
+                      rxDataWriteLow == UART_DATABITS_8) {
+                     i2cMem[rxData] = rxDataWriteLow;   
+                     returnType = SUCCESS;
+                  }
                }
-            }
-            break;
-         case SOCKET_STOPBITS:
-            if (Wire.available()) {
-               rxDataWriteLow = Wire.read();
-               if (rxDataWriteLow == UART_STOPBITS_1 || 
-                   rxDataWriteLow == UART_STOPBITS_2) {
-                  i2cMem[rxData] = rxDataWriteLow;  
-                  returnType = SUCCESS; 
+               break;
+            case SOCKET_STOPBITS:
+               if (Wire.available()) {
+                  rxDataWriteLow = Wire.read();
+                  if (rxDataWriteLow == UART_STOPBITS_1 || 
+                      rxDataWriteLow == UART_STOPBITS_2) {
+                     i2cMem[rxData] = rxDataWriteLow;  
+                     returnType = SUCCESS; 
+                  }
                }
-            }
-            break;
-         case SOCKET_PARITY:
-            if (Wire.available()) {
-               rxDataWriteLow = Wire.read();
-               if (rxDataWriteLow == UART_PARITY_NONE || 
-                   rxDataWriteLow == UART_PARITY_EVEN ||
-                   rxDataWriteLow == UART_PARITY_ODD) {
-                  i2cMem[rxData] = rxDataWriteLow;   
-                  returnType = SUCCESS;
+               break;
+            case SOCKET_PARITY:
+               if (Wire.available()) {
+                  rxDataWriteLow = Wire.read();
+                  if (rxDataWriteLow == UART_PARITY_NONE || 
+                      rxDataWriteLow == UART_PARITY_EVEN ||
+                      rxDataWriteLow == UART_PARITY_ODD) {
+                     i2cMem[rxData] = rxDataWriteLow;   
+                     returnType = SUCCESS;
+                  }
                }
-            }
-            break;
-         default:
-            break;
-      }
-      // Clean any data left
-      while (Wire.available()) {
-         rxData = Wire.read();
-      }
+               break;
+            default:
+               break;
+         }
+      } 
+   }
+        
+   // Clean any data left
+   while (Wire.available()) {
+      rxData = Wire.read();
    }
 
 }
@@ -438,6 +465,22 @@ void sendData () {
             i2cMem[MASK_FULL(SOCKET_1, FIFO_AVAILABLE_LOW)] = availData & 0xFF;
             i2cMem[MASK_FULL(SOCKET_1, FIFO_TO_READ_HIGH)] = availData >> 8;
             i2cMem[MASK_FULL(SOCKET_1, FIFO_TO_READ_LOW)] = availData & 0xFF;
+            if (availData > 0 ) {
+               i2cMem[MASK_FULL(SOCKET_1, INT_UART)] = 0x01;
+               digitalWrite(PIN_ISR, HIGH);
+            }
+         }
+         if (socket == SOCKET_GPS) {
+            if (MASK_ADDRESS(i2cPointer) == GPS_READ_GGA) {
+               for (int i = 0; (i < GPS_BUFFER_SIZE) && (i < CHUNK_SIZE); i++) {
+                  Wire.write(gpsBufferGGA[i]);
+               }
+            }
+            if (MASK_ADDRESS(i2cPointer) == GPS_READ_RMC) {
+               for (int i = 0; (i < GPS_BUFFER_SIZE) && (i < CHUNK_SIZE); i++) {
+                  Wire.write(gpsBufferRMC[i]);
+               }
+            }
          }
          break;
       case DWORD:
@@ -703,6 +746,8 @@ void updateGPS() {
    uint8_t frameType = GPS_TYPE_NONE;
    uint8_t frameComplete = GPS_TYPE_NONE;
 
+   Wire.end(); // Pause I2C interrupts
+
    // Clean the GPS buffers
    memset(gpsBufferGGA, 0x00, GPS_BUFFER_SIZE);
    memset(gpsBufferRMC, 0x00, GPS_BUFFER_SIZE);
@@ -797,6 +842,8 @@ void updateGPS() {
          delay(DELAY_10MS);
       }
    }
+
+   Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
    
 }
 /* ------------------------------------------------------ */
