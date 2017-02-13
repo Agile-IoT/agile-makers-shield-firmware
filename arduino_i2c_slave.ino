@@ -23,7 +23,7 @@
 #define I2C_SIZE 256
 #define CHUNK_SIZE 128
 #define TX_BUFFER_SIZE 512
-#define RX_BUFFER_SIZE 1024
+#define RX_BUFFER_SIZE 768 //TODO: Change to 1024 when no memory problems
 #define GPS_BUFFER_SIZE 128
 #define PIN_ENABLE_UART_0 22
 #define PIN_ENABLE_UART_1 23
@@ -92,9 +92,9 @@
 
 /*** GPS ***/
 #define GPS_HEADER_SIZE 6
-#define GPS_TYPE_NONE 0
-#define GPS_TYPE_GGA 1
-#define GPS_TYPE_RMC 2
+#define GPS_TYPE_NONE B00000000
+#define GPS_TYPE_GGA B00000001
+#define GPS_TYPE_RMC B00000010
 /* ------------------------------------------------------ */
 
 
@@ -129,12 +129,27 @@ uint8_t defStopbits = UART_STOPBITS_1;
 uint8_t defParity = UART_PARITY_NONE;
 
 /*** GPS ***/
-const PROGMEM char GPS_set_baudrate[] = {"$PMTK251,115200*1F\r\n"};
-const PROGMEM char GPS_set_NMEA_sentences[] = {"$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"};
-const PROGMEM char GPS_GGA = {"$GPGGA"};
-const PROGMEM char GPS_RMC = {"$GPRMC"};
+const PROGMEM char GPS_set_baudrate[] = "$PMTK251,115200*1F\r\n"; // Baudrate = 115200
+const PROGMEM char GPS_set_NMEA_sentences[] = "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"; // GGCA and RMC
+const PROGMEM char GPS_set_update_time[] = "$PMTK220,1000*1F\r\n"; // One second between updates
+const char GPS_HEADER_GGA[] = "$GPGGA";
+const char GPS_HEADER_RMC[] = "$GPRMC";
 /* ------------------------------------------------------ */
 
+
+extern unsigned int __bss_end;
+extern unsigned int __heap_start;
+extern void *__brkval;
+
+uint16_t getFreeSram() {
+  uint8_t newVariable;
+  // heap is empty, use bss as start memory address
+  if ((uint16_t)__brkval == 0)
+    return (((uint16_t)&newVariable) - ((uint16_t)&__bss_end));
+  // use heap end as the start of the memory address
+  else
+    return (((uint16_t)&newVariable) - ((uint16_t)__brkval));
+};
 
 /* --- FUNCTIONS ---------------------------------------- */
 
@@ -191,17 +206,27 @@ void setup () {
    attachInterrupt(PIN_INT_1, buttonEvent1, FALLING);
    pinMode(PIN_ISR, OUTPUT);
    digitalWrite(PIN_ISR, LOW);
-
+   
    // Initialize GPS
    UART_GPS.begin(9600);
    delay(DELAY_10MS);
-   UART_GPS.write(GPS_set_baudrate);
+   for (int i = 0; i < strlen_P(GPS_set_baudrate); i++) {
+      UART_GPS.write(pgm_read_byte_near(GPS_set_baudrate + i));
+   }
    delay(DELAY_10MS);
    UART_GPS.end();
    delay(DELAY_10MS);
    UART_GPS.begin(115200);
    delay(DELAY_10MS);
-   UART_GPS.write(GPS_set_NMEA_sentences);
+   for (int i = 0; i < strlen_P(GPS_set_NMEA_sentences); i++) {
+      UART_GPS.write(pgm_read_byte_near(GPS_set_NMEA_sentences + i));
+   }
+   delay(DELAY_10MS);
+   for (int i = 0; i < strlen_P(GPS_set_update_time); i++) {
+      UART_GPS.write(pgm_read_byte_near(GPS_set_update_time + i));
+   }
+
+   Serial.begin(9600); //TODO: Delete this   
    
 }
 
@@ -213,6 +238,17 @@ void setup () {
 void loop () {
 
    // Do nothing
+   updateGPS();
+   Serial.println();
+   Serial.print(F("SRAM: "));
+   Serial.println(getFreeSram());
+   Serial.print(F("GGA: "));
+   Serial.write(gpsBufferGGA, sizeof(gpsBufferGGA));
+   Serial.println();
+   Serial.print(F("RMC: "));
+   Serial.write(gpsBufferRMC, sizeof(gpsBufferRMC));
+   Serial.println();
+   delay(5000);
 
 }
 
@@ -663,15 +699,19 @@ void updateGPS() {
 
    uint8_t data;
    uint16_t pointer = 0;
-   uint8_t frameStart[GPS_HEADER_SIZE];
+   char frameStart[GPS_HEADER_SIZE+1];
    uint8_t frameType = GPS_TYPE_NONE;
+   uint8_t frameComplete = GPS_TYPE_NONE;
 
    // Clean the GPS buffers
    memset(gpsBufferGGA, 0x00, GPS_BUFFER_SIZE);
    memset(gpsBufferRMC, 0x00, GPS_BUFFER_SIZE);
+   memset(frameStart, 0x00, GPS_HEADER_SIZE);
 
-   // Flush all the previous data
-   UART_GPS.flush();
+   // Flush all the previous data from the buffer
+   while (UART_GPS.available() > 0) {
+      UART_GPS.read();
+   }
 
    // Wait till new data
    while (UART_GPS.available() <= 0) {
@@ -679,11 +719,13 @@ void updateGPS() {
    }
 
    // Read the data
-   while ((UART_GPS.available() > 0) && (pointer < GPS_BUFFER_SIZE)) {
+   while ((UART_GPS.available() > 0)) {// && (pointer < GPS_BUFFER_SIZE) && (frameComplete != (GPS_TYPE_GGA | GPS_TYPE_RMC))) {
       data = UART_GPS.read();
-      // If the char is "$", "\r" or "\n", the frame restarts
-      if ((data == "$") or (data == "\r") or (data == "\n")) {
+      // If the char is '$', '\r' or '\n', the frame restarts
+      if ((data == '$') or (data == '\r') or (data == '\n')) {
+         frameComplete = frameComplete | frameType;
          pointer = 0;
+         memset(frameStart, 0x00, GPS_HEADER_SIZE);
          frameType = GPS_TYPE_NONE;
       }
       // Decide the action depending on the pointer
@@ -692,19 +734,36 @@ void updateGPS() {
          frameStart[pointer] = data;
          pointer++;
       } else if (pointer == GPS_HEADER_SIZE) {
+         frameStart[GPS_HEADER_SIZE] = '\0';
          // Check type of frame
-         if (strcmp(frameType, GPS_GGA)) {
-            //TODO: Copy start in frame
-            frameType = GPS_TYPE_GGA;
-            gpsBufferGGA[pointer] = data;
-            pointer++;
-         } else if (strcmp(frameType, GPS_RMC)) {
-            //TODO: Copy start in frame
-            frameType = GPS_TYPE_RMC;
-            gpsBufferRMC[pointer] = data;
-            pointer++;
+         if (strcmp(frameStart, GPS_HEADER_GGA) == 0) {
+            // If we have that type of frame already stored, skip
+            if (frameComplete & GPS_TYPE_GGA) {
+               pointer = 0;
+               memset(frameStart, 0x00, GPS_HEADER_SIZE);
+               frameType = GPS_TYPE_NONE;
+            } else {
+               strcpy(gpsBufferGGA, frameStart);
+               frameType = GPS_TYPE_GGA;
+               gpsBufferGGA[pointer] = data;
+               pointer++;
+            }
+         } else if (strcmp(frameStart, GPS_HEADER_RMC) == 0) {
+            // If we have type of frame already stored, skip
+            if (frameComplete & GPS_TYPE_RMC) {
+               pointer = 0;
+               memset(frameStart, 0x00, GPS_HEADER_SIZE);
+               frameType = GPS_TYPE_NONE;
+            } else {
+               strcpy(gpsBufferRMC, frameStart);
+               frameType = GPS_TYPE_RMC;
+               gpsBufferRMC[pointer] = data;
+               pointer++;
+            }
          } else {
             pointer = 0;
+            memset(frameStart, 0x00, GPS_HEADER_SIZE);
+            frameType = GPS_TYPE_NONE;
          }
       } else if (pointer > GPS_HEADER_SIZE) {
          // Fill the frame
@@ -721,12 +780,14 @@ void updateGPS() {
                case GPS_TYPE_NONE:
                default:
                   pointer = 0;
+                  memset(frameStart, 0x00, GPS_HEADER_SIZE);
+                  frameType = GPS_TYPE_NONE;
                   break;
             }
          }
       } else {
          // Waiting for start of frame
-         if (data == "$") {
+         if (data == '$') {
             frameStart[pointer] = data;
             pointer++;
          }
