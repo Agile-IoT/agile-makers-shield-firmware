@@ -271,7 +271,7 @@ void receiveData (int byteCount) {
    rxData = Wire.read();
    socket = MASK_SOCKET(rxData);
 
-   if (rxData = ATMEGA_CHECK) {
+   if (rxData == ATMEGA_CHECK) {
       //Type of request
       if (byteCount == 1) {
          // Read request
