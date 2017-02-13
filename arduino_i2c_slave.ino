@@ -7,8 +7,8 @@
  *      be accessed via I2C to open or close the          *
  *      serial port and to read or write.                 *
  *   Author: David Palomares                              *
- *   Version: 0.1                                         *
- *   Date: September 2016                                 *
+ *   Version: 0.2                                         *
+ *   Date: February 2017                                  *
  **********************************************************/
 
 
@@ -20,11 +20,12 @@
 /* --- DEFINES ------------------------------------------ */
 /*** ATMega ***/
 #define SLAVE_ADDRESS 0x14
+#define ATMEGA_CHECK_BYTE 0xDA
 #define I2C_SIZE 256
 #define CHUNK_SIZE 128
 #define TX_BUFFER_SIZE 512
-#define RX_BUFFER_SIZE 1024 //TODO: Change to 1024 when no memory problems
-#define GPS_BUFFER_SIZE 128 // This has to be less or equal to CHUNK_SIZE
+#define RX_BUFFER_SIZE 1024
+#define GPS_BUFFER_SIZE 128 // (x <= CHUNK_SIZE) && (x <= 255)
 #define PIN_ENABLE_UART_0 22
 #define PIN_ENABLE_UART_1 23
 #define PIN_BUTTON_0 70
@@ -49,6 +50,7 @@
 #define UART_GPS Serial2
 
 /*** I2C Addresses ***/
+#define ATMEGA_CHECK 0xFF
 #define FIFO_TX 0x00
 #define FIFO_RX 0x01
 #define FIFO_AVAILABLE_HIGH 0x02 // Available is an uint16_t
@@ -66,8 +68,9 @@
 #define INT_UART 0x0E
 #define INT_BUTTON 0x0F
 #define GPS_UPDATE 0x00
-#define GPS_READ_GGA 0x01
-#define GPS_READ_RMC 0x02
+#define GPS_READ_BUFFER_SIZE 0x01
+#define GPS_READ_GGA 0x02
+#define GPS_READ_RMC 0x03
 
 /*** Other definitions ***/
 // Type of the data sent to the I2C master
@@ -178,6 +181,7 @@ void setup () {
    
    // Initialize the I2C memory
    memset(i2cMem, 0x00, I2C_SIZE);
+   i2cMem[ATMEGA_CHECK] = ATMEGA_CHECK_BYTE;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_3)] = defBaudrate3;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_2)] = defBaudrate2;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_1)] = defBaudrate1;
@@ -194,6 +198,7 @@ void setup () {
    i2cMem[MASK_FULL(SOCKET_1, SOCKET_PARITY)] = defParity;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_STATUS)] = MODE_OFF;
    i2cMem[MASK_FULL(SOCKET_1, SOCKET_STATUS)] = MODE_OFF;
+   i2cMem[MASK_FULL(SOCKET_GPS, GPS_READ_BUFFER_SIZE)] = GPS_BUFFER_SIZE;
    
    // Initialize I2C as slave
    Wire.begin(SLAVE_ADDRESS);
@@ -215,14 +220,14 @@ void setup () {
    // Initialize GPS
    UART_GPS.begin(9600);
    delay(DELAY_10MS);
-   //for (int i = 0; i < strlen_P(GPS_set_baudrate); i++) {
-   //   UART_GPS.write(pgm_read_byte_near(GPS_set_baudrate + i));
-   //}
-   //delay(DELAY_10MS);
-   //UART_GPS.end();
-   //delay(DELAY_10MS);
-   //UART_GPS.begin(115200);
-   //delay(DELAY_10MS);
+   for (int i = 0; i < strlen_P(GPS_set_baudrate); i++) {
+      UART_GPS.write(pgm_read_byte_near(GPS_set_baudrate + i));
+   }
+   delay(DELAY_10MS);
+   UART_GPS.end();
+   delay(DELAY_10MS);
+   UART_GPS.begin(115200);
+   delay(DELAY_10MS);
    for (int i = 0; i < strlen_P(GPS_set_NMEA_sentences); i++) {
       UART_GPS.write(pgm_read_byte_near(GPS_set_NMEA_sentences + i));
    }
@@ -266,11 +271,25 @@ void receiveData (int byteCount) {
    rxData = Wire.read();
    socket = MASK_SOCKET(rxData);
 
-   if (socket == SOCKET_GPS) {
+   if (rxData = ATMEGA_CHECK) {
+      //Type of request
+      if (byteCount == 1) {
+         // Read request
+         returnType = BYTE;
+         i2cPointer = rxData;
+      } else {
+         // Write request
+         returnType = FAIL;
+      }
+   } else if (socket == SOCKET_GPS) {
       //Type of request
       if (byteCount == 1) {
          // Read request
          switch (MASK_ADDRESS(rxData)) {
+            case GPS_READ_BUFFER_SIZE:
+               returnType = BYTE;
+               i2cPointer = rxData;
+               break;
             case GPS_READ_GGA:
             case GPS_READ_RMC:
                returnType = ARRAY;
