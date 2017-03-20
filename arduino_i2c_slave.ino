@@ -26,13 +26,25 @@
 #define TX_BUFFER_SIZE 512
 #define RX_BUFFER_SIZE 1024
 #define GPS_BUFFER_SIZE 128 // (x <= CHUNK_SIZE) && (x <= 255)
+// UART Pins
 #define PIN_ENABLE_UART_0 22
 #define PIN_ENABLE_UART_1 23
+// Interruption Pins
 #define PIN_BUTTON_0 70
 #define PIN_INT_0 6
 #define PIN_BUTTON_1 71
 #define PIN_INT_1 7
 #define PIN_ISR 3
+// LED Pins
+#define PIN_LED_S0_R 4
+#define PIN_LED_S0_G 5
+#define PIN_LED_S0_B 46
+#define PIN_LED_S1_R 13
+#define PIN_LED_S1_G 12
+#define PIN_LED_S1_B 11
+#define PIN_LED_AUX_2 8
+#define PIN_LED_AUX_3 7
+#define PIN_LED_AUX_4 6
 
 /*** Functions ***/
 #define MASK_SOCKET(x) ((x >> 4) & 0x0F)
@@ -43,6 +55,7 @@
 #define SOCKET_0 0
 #define SOCKET_1 1
 #define SOCKET_GPS 2
+#define SOCKET_LEDS 3
 #define UART_0 Serial3
 #define UART_EVENT_0 serialEvent3
 #define UART_1 Serial1
@@ -71,6 +84,15 @@
 #define GPS_READ_BUFFER_SIZE 0x01
 #define GPS_READ_GGA 0x02
 #define GPS_READ_RMC 0x03
+#define LED_S0_R 0x0A
+#define LED_S0_G 0x0B
+#define LED_S0_B 0x0C
+#define LED_S1_R 0x0D
+#define LED_S1_G 0x0E
+#define LED_S1_B 0x0F
+#define LED_AUX_2 0x02
+#define LED_AUX_3 0x03
+#define LED_AUX_4 0x04
 
 /*** Other definitions ***/
 // Type of the data sent to the I2C master
@@ -272,7 +294,7 @@ void receiveData (int byteCount) {
    socket = MASK_SOCKET(rxData);
 
    if (rxData == ATMEGA_CHECK) {
-      //Type of request
+      // ATMEGA CHECK: Type of request
       if (byteCount == 1) {
          // Read request
          returnType = BYTE;
@@ -282,7 +304,7 @@ void receiveData (int byteCount) {
          returnType = FAIL;
       }
    } else if (socket == SOCKET_GPS) {
-      //Type of request
+      // GPS: Type of request
       if (byteCount == 1) {
          // Read request
          switch (MASK_ADDRESS(rxData)) {
@@ -312,8 +334,70 @@ void receiveData (int byteCount) {
                break;
          }
       }
+   } else if (socket == SOCKET_LEDS) {
+      // LEDS: Type of request
+      if (byteCount == 1) {
+         // Read request
+         returnType = BYTE;
+         i2cPointer = rxData;
+      } else {
+         // Write request
+         returnType = FAIL;
+         if (Wire.available()) {
+            rxDataWriteLow = Wire.read();
+            switch (MASK_ADDRESS(rxData)) {
+               case LED_S0_R:
+                  analogWrite(PIN_LED_S0_R, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_S0_G:
+                  analogWrite(PIN_LED_S0_G, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_S0_B:
+                  analogWrite(PIN_LED_S0_B, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_S1_R:
+                  analogWrite(PIN_LED_S1_R, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_S1_G:
+                  analogWrite(PIN_LED_S1_G, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_S1_B:
+                  analogWrite(PIN_LED_S1_B, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_AUX_2:
+                  analogWrite(PIN_LED_AUX_2, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_AUX_3:
+                  analogWrite(PIN_LED_AUX_3, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               case LED_AUX_4:
+                  analogWrite(PIN_LED_AUX_4, rxDataWriteLow);
+                  i2cMem[rxData] = rxDataWriteLow;
+                  returnType = SUCCESS;
+                  break;
+               default:
+                  break;
+         }
+         }
+      }
    } else {
-      // Type of request
+      // SOCKET_0 or SOCKET_1 or UNKNOWN: Type of request
       if (byteCount == 1) {
          // Read request
          switch (MASK_ADDRESS(rxData)) {
