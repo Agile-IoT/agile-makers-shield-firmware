@@ -105,8 +105,12 @@
 // UART status
 #define MODE_OFF 0
 #define MODE_ON 1
+// LEDS
+#define LED_OFF 0
+#define LED_ON 128
 // OTHER
 #define DELAY_10MS 10
+#define DELAY_250MS 250
 
 /*** UART config ***/
 #define UART_DATABITS_5 0x00
@@ -189,6 +193,17 @@ uint16_t getFreeSram() {
  */
 void setup () {
 
+   // Turn off the LEDs
+   analogWrite(PIN_LED_S0_R, LED_OFF);
+   analogWrite(PIN_LED_S0_G, LED_OFF);
+   analogWrite(PIN_LED_S0_B, LED_OFF);
+   analogWrite(PIN_LED_S1_R, LED_OFF);
+   analogWrite(PIN_LED_S1_G, LED_OFF);
+   analogWrite(PIN_LED_S1_B, LED_OFF);
+   analogWrite(PIN_LED_AUX_2, LED_OFF);
+   analogWrite(PIN_LED_AUX_3, LED_OFF);
+   analogWrite(PIN_LED_AUX_4, LED_OFF);
+   
    // Initialize Buffer 0
    memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
    memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
@@ -258,7 +273,28 @@ void setup () {
       UART_GPS.write(pgm_read_byte_near(GPS_set_update_time + i));
    }
 
-   //Serial.begin(9600); //TODO: Delete this   
+   // Ready indicator
+   analogWrite(PIN_LED_S0_R, LED_ON);
+   analogWrite(PIN_LED_S1_R, LED_ON);
+   analogWrite(PIN_LED_AUX_2, LED_ON);
+   delay(DELAY_250MS);
+   analogWrite(PIN_LED_S0_R, LED_OFF);
+   analogWrite(PIN_LED_S1_R, LED_OFF);
+   analogWrite(PIN_LED_AUX_2, LED_OFF);
+   analogWrite(PIN_LED_S0_G, LED_ON);
+   analogWrite(PIN_LED_S1_G, LED_ON);
+   analogWrite(PIN_LED_AUX_3, LED_ON);
+   delay(DELAY_250MS);
+   analogWrite(PIN_LED_S0_G, LED_OFF);
+   analogWrite(PIN_LED_S1_G, LED_OFF);
+   analogWrite(PIN_LED_AUX_3, LED_OFF);
+   analogWrite(PIN_LED_S0_B, LED_ON);
+   analogWrite(PIN_LED_S1_B, LED_ON);
+   analogWrite(PIN_LED_AUX_4, LED_ON);
+   delay(DELAY_250MS);
+   analogWrite(PIN_LED_S0_B, LED_OFF);
+   analogWrite(PIN_LED_S1_B, LED_OFF);
+   analogWrite(PIN_LED_AUX_4, LED_OFF);
    
 }
 
