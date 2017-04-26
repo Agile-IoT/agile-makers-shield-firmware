@@ -1,0 +1,41 @@
+# See: http://code.google.com/p/arduino/wiki/Platforms
+
+menu.cpu=Processor
+
+##############################################################
+
+agile.name=AGILE Maker's Shield
+
+agile.vid.0=0x2341
+agile.pid.0=0x0010
+agile.vid.1=0x2341
+agile.pid.1=0x0042
+agile.vid.2=0x2A03
+agile.pid.2=0x0010
+agile.vid.3=0x2A03
+agile.pid.3=0x0042
+agile.vid.4=0x2341
+agile.pid.4=0x0210
+agile.vid.5=0x2341
+agile.pid.5=0x0242
+
+agile.upload.tool=avrdude
+agile.upload.maximum_data_size=8192
+
+agile.build.f_cpu=16000000L
+agile.build.core=arduino:arduino
+agile.build.variant=agile
+# default board may be overridden by the cpu menu
+agile.build.board=AVR_MEGA2560
+
+## Processor of AGILE MAker's Shield (ATmega2560)
+## ----------------------------------------------
+agile.menu.cpu.atmega2560=AGILE (ATmega2560)
+
+agile.menu.cpu.atmega2560.upload.protocol=wiring
+agile.menu.cpu.atmega2560.upload.maximum_size=253952
+agile.menu.cpu.atmega2560.upload.speed=115200
+
+agile.menu.cpu.atmega2560.build.mcu=atmega2560
+agile.menu.cpu.atmega2560.build.board=AVR_MEGA2560
+
