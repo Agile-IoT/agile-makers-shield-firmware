@@ -1,15 +1,45 @@
+
+/****************************************************************************
+ * Copyright (c) 2016, 2017 Libelium Comunicaciones Distribuidas S.L.       *
+ *                                                                          *
+ * All rights reserved. This program and the accompanying materials         *
+ * are made available under the terms of the Eclipse Public License v1.0    *
+ * and Eclipse Distribution License v1.0 which accompany this distribution. *
+ *                                                                          *
+ * The Eclipse Public License is available at                               *
+ *    http://www.eclipse.org/legal/epl-v10.html                             *
+ * and the Eclipse Distribution License is available at                     *
+ *   http://www.eclipse.org/org/documents/edl-v10.php.                      *
+ *                                                                          *
+ * Contributors:                                                            *
+ *    David Palomares - Initial implementation                              *
+ ****************************************************************************
  
-/***********************************************************
+/**********************************************************
+ *          AGILE Maker's Shield Firmware                 *
  *               ATMega Serial-to-I2C                     *
  *                                                        *
  *   Description: Program to interact with two UARTS      *
  *      and store the RX in a buffer. The buffer can      *
  *      be accessed via I2C to open or close the          *
- *      serial port and to read or write.                 *
+ *      serial port and to read or write. Also controls   *
+ *      a GPS with another UART and some LEDs with        *
+ *      the I/O pins.                                     *
  *   Author: David Palomares                              *
  *   Version: 0.2                                         *
  *   Date: February 2017                                  *
  **********************************************************/
+
+
+/* --- BUFFERS FROM LIBRARIES --------------------------- */
+#ifdef SERIAL_TX_BUFFER_SIZE
+#undef SERIAL_TX_BUFFER_SIZE
+#endif
+#define SERIAL_TX_BUFFER_SIZE 256
+#ifdef SERIAL_RX_BUFFER_SIZE
+#undef SERIAL_RX_BUFFER_SIZE
+#endif
+/* ------------------------------------------------------ */
 
 
 /* --- INCLUDES ----------------------------------------- */
@@ -23,8 +53,8 @@
 #define ATMEGA_CHECK_BYTE 0xDA
 #define I2C_SIZE 256
 #define CHUNK_SIZE 128
-#define TX_BUFFER_SIZE 512
-#define RX_BUFFER_SIZE 1024
+#define TX_BUFFER_SIZE 1024
+#define RX_BUFFER_SIZE 2048
 #define GPS_BUFFER_SIZE 128 // (x <= CHUNK_SIZE) && (x <= 255)
 // UART Pins
 #define PIN_ENABLE_UART_0 22
@@ -171,24 +201,10 @@ const char GPS_HEADER_RMC[] = "$GPRMC";
 /* ------------------------------------------------------ */
 
 
-extern unsigned int __bss_end;
-extern unsigned int __heap_start;
-extern void *__brkval;
-
-uint16_t getFreeSram() {
-  uint8_t newVariable;
-  // heap is empty, use bss as start memory address
-  if ((uint16_t)__brkval == 0)
-    return (((uint16_t)&newVariable) - ((uint16_t)&__bss_end));
-  // use heap end as the start of the memory address
-  else
-    return (((uint16_t)&newVariable) - ((uint16_t)__brkval));
-};
-
 /* --- FUNCTIONS ---------------------------------------- */
 
 /*
- * Function: setup 
+ * Function: setup
  * Initializes the ATMega
  */
 void setup () {
@@ -203,7 +219,7 @@ void setup () {
    analogWrite(PIN_LED_AUX_2, LED_OFF);
    analogWrite(PIN_LED_AUX_3, LED_OFF);
    analogWrite(PIN_LED_AUX_4, LED_OFF);
-   
+
    // Initialize Buffer 0
    memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
    memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
@@ -215,7 +231,7 @@ void setup () {
    // Initialize GPS Buffers
    memset(gpsBufferGGA, 0x00, GPS_BUFFER_SIZE);
    memset(gpsBufferRMC, 0x00, GPS_BUFFER_SIZE);
-   
+
    // Initialize the I2C memory
    memset(i2cMem, 0x00, I2C_SIZE);
    i2cMem[ATMEGA_CHECK] = ATMEGA_CHECK_BYTE;
@@ -236,7 +252,7 @@ void setup () {
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_STATUS)] = MODE_OFF;
    i2cMem[MASK_FULL(SOCKET_1, SOCKET_STATUS)] = MODE_OFF;
    i2cMem[MASK_FULL(SOCKET_GPS, GPS_READ_BUFFER_SIZE)] = GPS_BUFFER_SIZE;
-   
+
    // Initialize I2C as slave
    Wire.begin(SLAVE_ADDRESS);
 
@@ -253,7 +269,7 @@ void setup () {
    attachInterrupt(PIN_INT_1, buttonEvent1, FALLING);
    pinMode(PIN_ISR, OUTPUT);
    digitalWrite(PIN_ISR, LOW);
-   
+
    // Initialize GPS
    UART_GPS.begin(9600);
    delay(DELAY_10MS);
@@ -295,7 +311,7 @@ void setup () {
    analogWrite(PIN_LED_S0_B, LED_OFF);
    analogWrite(PIN_LED_S1_B, LED_OFF);
    analogWrite(PIN_LED_AUX_4, LED_OFF);
-   
+
 }
 
 
@@ -322,7 +338,7 @@ void receiveData (int byteCount) {
 
    uint8_t rxData = 0x00;
    uint8_t rxDataWriteLow = 0x00;
-   uint8_t rxDataWriteHigh = 0x00;  
+   uint8_t rxDataWriteHigh = 0x00;
    uint8_t socket = 0x00;
 
    // Read the first data (the command of the request)
@@ -356,7 +372,7 @@ void receiveData (int byteCount) {
             default:
                returnType = BYTE;
                i2cPointer = rxData;
-               break;  
+               break;
          }
       } else {
          // Write request
@@ -429,7 +445,7 @@ void receiveData (int byteCount) {
                   break;
                default:
                   break;
-         }
+            }
          }
       }
    } else {
@@ -437,7 +453,7 @@ void receiveData (int byteCount) {
       if (byteCount == 1) {
          // Read request
          switch (MASK_ADDRESS(rxData)) {
-            case FIFO_RX:    
+            case FIFO_RX:
                returnType = ARRAY;
                i2cPointer = rxData;
                break;
@@ -446,11 +462,11 @@ void receiveData (int byteCount) {
                i2cPointer = rxData;
                break;
             case FIFO_AVAILABLE_HIGH:
-               // Copy FIFO_AVAILABLE to FIFO_TO_READ in case 
+               // Copy FIFO_AVAILABLE to FIFO_TO_READ in case
                // it changes while requesting a read
-               i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 
+               i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] =
                      i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_HIGH)];
-               i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 
+               i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] =
                      i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)];
                returnType = WORD;
                i2cPointer = MASK_FULL(socket, FIFO_TO_READ_HIGH);
@@ -476,7 +492,7 @@ void receiveData (int byteCount) {
                returnType = BYTE;
                i2cPointer = rxData;
                break;
-         }   
+         }
       } else {
          // Write request
          returnType = FAIL;
@@ -499,16 +515,16 @@ void receiveData (int byteCount) {
                      i2cMem[rxData + i] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
-               }     
+               }
                break;
             case SOCKET_DATABITS:
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
-                  if (rxDataWriteLow == UART_DATABITS_5 || 
+                  if (rxDataWriteLow == UART_DATABITS_5 ||
                       rxDataWriteLow == UART_DATABITS_6 ||
                       rxDataWriteLow == UART_DATABITS_7 ||
                       rxDataWriteLow == UART_DATABITS_8) {
-                     i2cMem[rxData] = rxDataWriteLow;   
+                     i2cMem[rxData] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
                }
@@ -516,20 +532,20 @@ void receiveData (int byteCount) {
             case SOCKET_STOPBITS:
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
-                  if (rxDataWriteLow == UART_STOPBITS_1 || 
+                  if (rxDataWriteLow == UART_STOPBITS_1 ||
                       rxDataWriteLow == UART_STOPBITS_2) {
-                     i2cMem[rxData] = rxDataWriteLow;  
-                     returnType = SUCCESS; 
+                     i2cMem[rxData] = rxDataWriteLow;
+                     returnType = SUCCESS;
                   }
                }
                break;
             case SOCKET_PARITY:
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
-                  if (rxDataWriteLow == UART_PARITY_NONE || 
+                  if (rxDataWriteLow == UART_PARITY_NONE ||
                       rxDataWriteLow == UART_PARITY_EVEN ||
                       rxDataWriteLow == UART_PARITY_ODD) {
-                     i2cMem[rxData] = rxDataWriteLow;   
+                     i2cMem[rxData] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
                }
@@ -537,9 +553,9 @@ void receiveData (int byteCount) {
             default:
                break;
          }
-      } 
+      }
    }
-        
+
    // Clean any data left
    while (Wire.available()) {
       rxData = Wire.read();
@@ -562,17 +578,18 @@ void sendData () {
       case ARRAY:
          // In case of array, return all available data up to CHUNK_SIZE
          if (socket == SOCKET_0) {
-            availData = 
+            availData =
                   (i2cMem[MASK_FULL(SOCKET_0, FIFO_TO_READ_HIGH)] << 8) |
                   i2cMem[MASK_FULL(SOCKET_0, FIFO_TO_READ_LOW)];
-            for (int i = readPointer0; (i < (readPointer0 + CHUNK_SIZE)) && (i < (readPointer0 + availData)); i++) {
+            for (int i = readPointer0; (i < (readPointer0 + CHUNK_SIZE)) &&
+                  (i < (readPointer0 + availData)); i++) {
                Wire.write(rxBuffer0[(i % RX_BUFFER_SIZE)]);
                dataWritten++;
             }
             readPointer0 = (readPointer0 + dataWritten) % RX_BUFFER_SIZE;
             // Update the available data
             if (stackPointer0 >= readPointer0) {
-               availData = stackPointer0 - readPointer0;   
+               availData = stackPointer0 - readPointer0;
             } else {
                availData = stackPointer0 + RX_BUFFER_SIZE - readPointer0;
             }
@@ -586,17 +603,18 @@ void sendData () {
             }
          }
          if (socket == SOCKET_1) {
-            availData = 
+            availData =
                   (i2cMem[MASK_FULL(SOCKET_1, FIFO_TO_READ_HIGH)] << 8) |
                   i2cMem[MASK_FULL(SOCKET_1, FIFO_TO_READ_LOW)];
-            for (int i = readPointer1; (i < (readPointer1 + CHUNK_SIZE)) && (i < (readPointer1 + availData)); i++) {
+            for (int i = readPointer1; (i < (readPointer1 + CHUNK_SIZE)) &&
+                  (i < (readPointer1 + availData)); i++) {
                Wire.write(rxBuffer1[(i % RX_BUFFER_SIZE)]);
                dataWritten++;
             }
             readPointer1 = (readPointer1 + dataWritten) % RX_BUFFER_SIZE;
             // Update the available data
             if (stackPointer1 >= readPointer1) {
-               availData = stackPointer1 - readPointer1;   
+               availData = stackPointer1 - readPointer1;
             } else {
                availData = stackPointer1 + RX_BUFFER_SIZE - readPointer1;
             }
@@ -628,7 +646,7 @@ void sendData () {
                Wire.write(i2cMem[i2cPointer + i]);
             } else {
                Wire.write(0x00);
-            }  
+            }
          }
          break;
       case WORD:
@@ -650,7 +668,7 @@ void sendData () {
          Wire.write(0x00);
          break;
    }
-   
+
 }
 
 /*
@@ -670,8 +688,8 @@ void updateUART (uint8_t socket, uint8_t mode) {
    uint8_t databits = i2cMem[MASK_FULL(socket, SOCKET_DATABITS)];
    uint8_t stopbits = i2cMem[MASK_FULL(socket, SOCKET_STOPBITS)];
    uint8_t parity = i2cMem[MASK_FULL(socket, SOCKET_PARITY)];
-   uint8_t config = databits | stopbits | parity; 
-  
+   uint8_t config = databits | stopbits | parity;
+
    if (socket == SOCKET_0) {
        // Close the SOCKET_0
        UART_0.end();
@@ -702,7 +720,7 @@ void updateUART (uint8_t socket, uint8_t mode) {
          i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_ON;
       }
    }
-   
+
    if (socket == SOCKET_1) {
       // Close the SOCKET_1
       UART_1.end();
@@ -733,7 +751,7 @@ void updateUART (uint8_t socket, uint8_t mode) {
          i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_ON;
       }
    }
-   
+
 }
 
 /*
@@ -750,7 +768,8 @@ void UART_EVENT_0 () {
       while (UART_0.available() > 0) {
          data = UART_0.read();
          // Check if buffer is full
-         if (((stackPointer0 + 1 ) % RX_BUFFER_SIZE) != (readPointer0 % RX_BUFFER_SIZE)) {
+         if (((stackPointer0 + 1 ) % RX_BUFFER_SIZE) !=
+               (readPointer0 % RX_BUFFER_SIZE)) {
             // Store the data in the buffer
             rxBuffer0[stackPointer0] = data;
             stackPointer0 = (stackPointer0 + 1) % RX_BUFFER_SIZE;
@@ -762,7 +781,7 @@ void UART_EVENT_0 () {
       }
       // Update the available data
       if (stackPointer0 >= readPointer0) {
-         availData = stackPointer0 - readPointer0;   
+         availData = stackPointer0 - readPointer0;
       } else {
          availData = stackPointer0 + RX_BUFFER_SIZE - readPointer0;
       }
@@ -771,9 +790,9 @@ void UART_EVENT_0 () {
       // Update the interruption flag
       i2cMem[MASK_FULL(SOCKET_0, INT_UART)] = 0x01;
       digitalWrite(PIN_ISR, HIGH); //TODO: Maybe -> write(HIGH); delay(x); write(LOW);
-   
+
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
-    
+
 }
 
 /*
@@ -786,7 +805,7 @@ void UART_EVENT_1 () {
    uint16_t availData;
 
    Wire.end(); // Pause I2C interrupts
-   
+
       while (UART_1.available() > 0) {
          data = UART_1.read();
          // Check if buffer is full
@@ -802,7 +821,7 @@ void UART_EVENT_1 () {
       }
       // Update the available data
       if (stackPointer1 >= readPointer1) {
-         availData = stackPointer1 - readPointer1;   
+         availData = stackPointer1 - readPointer1;
       } else {
          availData = stackPointer1 + RX_BUFFER_SIZE - readPointer1;
       }
@@ -811,9 +830,9 @@ void UART_EVENT_1 () {
       // Update the interruption flag
       i2cMem[MASK_FULL(SOCKET_1, INT_UART)] = 0x01;
       digitalWrite(PIN_ISR, HIGH);
-      
+
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
-    
+
 }
 
 /*
@@ -824,7 +843,7 @@ void sendToUART (uint8_t socket) {
 
    uint8_t data;
    uint16_t len = 0;
-  
+
    if (socket == SOCKET_0) {
       while (Wire.available()) {
          data = Wire.read();
@@ -844,11 +863,11 @@ void sendToUART (uint8_t socket) {
             txBuffer1[len] = data;
             len++;
          }
-      } 
+      }
       UART_1.write(txBuffer1, len);
       UART_1.flush();
    }
-   
+
 }
 
 /*
@@ -859,7 +878,7 @@ void buttonEvent0 () {
 
    i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] = 0x01;
    digitalWrite(PIN_ISR, HIGH);
-   
+
 }
 
 /*
@@ -903,7 +922,7 @@ void updateGPS() {
    }
 
    // Read the data
-   while ((UART_GPS.available() > 0)) {// && (pointer < GPS_BUFFER_SIZE) && (frameComplete != (GPS_TYPE_GGA | GPS_TYPE_RMC))) {
+   while ((UART_GPS.available() > 0)) {
       data = UART_GPS.read();
       // If the char is '$', '\r' or '\n', the frame restarts
       if ((data == '$') or (data == '\r') or (data == '\n')) {
@@ -983,7 +1002,7 @@ void updateGPS() {
    }
 
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
-   
+
 }
 /* ------------------------------------------------------ */
 
