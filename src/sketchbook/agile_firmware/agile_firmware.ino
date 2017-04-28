@@ -14,7 +14,7 @@
  * Contributors:                                                            *
  *    David Palomares - Initial implementation                              *
  ****************************************************************************
- 
+
 /**********************************************************
  *          AGILE Maker's Shield Firmware                 *
  *               ATMega Serial-to-I2C                     *
@@ -39,6 +39,7 @@
 #ifdef SERIAL_RX_BUFFER_SIZE
 #undef SERIAL_RX_BUFFER_SIZE
 #endif
+#define SERIAL_RX_BUFFER_SIZE 256
 /* ------------------------------------------------------ */
 
 
@@ -52,7 +53,7 @@
 #define SLAVE_ADDRESS 0x14
 #define ATMEGA_CHECK_BYTE 0xDA
 #define I2C_SIZE 256
-#define CHUNK_SIZE 128
+#define CHUNK_SIZE 128 // Size of the I2C buffer from <twi.h>
 #define TX_BUFFER_SIZE 1024
 #define RX_BUFFER_SIZE 2048
 #define GPS_BUFFER_SIZE 128 // (x <= CHUNK_SIZE) && (x <= 255)
@@ -181,6 +182,8 @@ volatile uint16_t readPointer1 = 0;
 // Buffer GPS
 uint8_t gpsBufferGGA[GPS_BUFFER_SIZE];
 uint8_t gpsBufferRMC[GPS_BUFFER_SIZE];
+volatile uint16_t gps_gga_pointer = 0;
+volatile uint16_t gps_rmc_pointer = 0;
 
 /*** UART Defaults ***/
 uint8_t defBaudrate3 = 0x00; // 0x00002580 = 9600
@@ -629,14 +632,22 @@ void sendData () {
          }
          if (socket == SOCKET_GPS) {
             if (MASK_ADDRESS(i2cPointer) == GPS_READ_GGA) {
-               for (int i = 0; (i < GPS_BUFFER_SIZE) && (i < CHUNK_SIZE); i++) {
+               for (int i = gps_gga_pointer; (i < GPS_BUFFER_SIZE) && (i < (gps_gga_pointer + CHUNK_SIZE)); i++) {
                   Wire.write(gpsBufferGGA[i]);
+               }
+               gps_gga_pointer = gps_gga_pointer + CHUNK_SIZE;
+               if (gps_gga_pointer >= GPS_BUFFER_SIZE) {
+                  gps_gga_pointer = 0;
                }
             }
             if (MASK_ADDRESS(i2cPointer) == GPS_READ_RMC) {
-               for (int i = 0; (i < GPS_BUFFER_SIZE) && (i < CHUNK_SIZE); i++) {
-                  Wire.write(gpsBufferRMC[i]);
-               }
+                for (int i = gps_rmc_pointer; (i < GPS_BUFFER_SIZE) && (i < (gps_rmc_pointer + CHUNK_SIZE)); i++) {
+                   Wire.write(gpsBufferRMC[i]);
+                }
+                gps_rmc_pointer = gps_rmc_pointer + CHUNK_SIZE;
+                if (gps_rmc_pointer >= GPS_BUFFER_SIZE) {
+                   gps_rmc_pointer = 0;
+                }
             }
          }
          break;
@@ -800,7 +811,7 @@ void UART_EVENT_0 () {
  * Callback when UART_1 data is available
  */
 void UART_EVENT_1 () {
-  
+
    uint8_t data;
    uint16_t availData;
 
@@ -1001,9 +1012,11 @@ void updateGPS() {
       }
    }
 
+   // Reset GPS pointers
+   gps_gga_pointer = 0;
+   gps_rmc_pointer = 0;
+
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
 
 }
 /* ------------------------------------------------------ */
-
-
