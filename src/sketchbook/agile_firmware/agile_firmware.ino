@@ -30,6 +30,10 @@
  *   Date: February 2017                                  *
  **********************************************************/
 
+/*TODO
+   When PIN_ISR is set to HIGH, maybe add a timeout
+   to set it low again.
+*/
 
 /* --- BUFFERS FROM LIBRARIES --------------------------- */
 #ifdef SERIAL_TX_BUFFER_SIZE
@@ -61,11 +65,9 @@
 #define PIN_ENABLE_UART_0 22
 #define PIN_ENABLE_UART_1 23
 // Interruption Pins
-#define PIN_BUTTON_0 70
-#define PIN_INT_0 6
-#define PIN_BUTTON_1 71
-#define PIN_INT_1 7
-#define PIN_ISR 3
+#define PIN_BUTTON_0 2
+#define PIN_BUTTON_1 3
+#define PIN_ISR 48
 // LED Pins
 #define PIN_LED_S0_R 4
 #define PIN_LED_S0_G 5
@@ -267,9 +269,9 @@ void setup () {
    pinMode(PIN_ENABLE_UART_0, OUTPUT);
    pinMode(PIN_ENABLE_UART_0, OUTPUT);
    pinMode(PIN_BUTTON_0, INPUT);
-   attachInterrupt(PIN_INT_0, buttonEvent0, RISING);
+   attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_0), buttonEvent0, RISING);
    pinMode(PIN_BUTTON_1, INPUT);
-   attachInterrupt(PIN_INT_1, buttonEvent1, FALLING);
+   attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_1), buttonEvent1, RISING);
    pinMode(PIN_ISR, OUTPUT);
    digitalWrite(PIN_ISR, LOW);
 
@@ -800,7 +802,7 @@ void UART_EVENT_0 () {
       i2cMem[MASK_FULL(SOCKET_0, FIFO_AVAILABLE_LOW)] = availData & 0xFF;
       // Update the interruption flag
       i2cMem[MASK_FULL(SOCKET_0, INT_UART)] = 0x01;
-      digitalWrite(PIN_ISR, HIGH); //TODO: Maybe -> write(HIGH); delay(x); write(LOW);
+      digitalWrite(PIN_ISR, HIGH);
 
    Wire.begin(SLAVE_ADDRESS); // Restart I2C interrupts
 
