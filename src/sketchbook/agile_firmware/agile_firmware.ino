@@ -267,7 +267,9 @@ void setup () {
 
    // Initialize pins
    pinMode(PIN_ENABLE_UART_0, OUTPUT);
-   pinMode(PIN_ENABLE_UART_0, OUTPUT);
+   digitalWrite(PIN_ENABLE_UART_0, LOW);
+   pinMode(PIN_ENABLE_UART_1, OUTPUT);
+   digitalWrite(PIN_ENABLE_UART_1, LOW);
    pinMode(PIN_BUTTON_0, INPUT);
    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_0), buttonEvent0, RISING);
    pinMode(PIN_BUTTON_1, INPUT);
@@ -487,9 +489,9 @@ void receiveData (int byteCount) {
                }
                // Clean the pin
                if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
-                      (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
-                      (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
-                      (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
+                     (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
+                     (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
+                     (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
                   digitalWrite(PIN_ISR, LOW);
                }
                break;
@@ -526,9 +528,9 @@ void receiveData (int byteCount) {
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
                   if (rxDataWriteLow == UART_DATABITS_5 ||
-                      rxDataWriteLow == UART_DATABITS_6 ||
-                      rxDataWriteLow == UART_DATABITS_7 ||
-                      rxDataWriteLow == UART_DATABITS_8) {
+                        rxDataWriteLow == UART_DATABITS_6 ||
+                        rxDataWriteLow == UART_DATABITS_7 ||
+                        rxDataWriteLow == UART_DATABITS_8) {
                      i2cMem[rxData] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
@@ -538,7 +540,7 @@ void receiveData (int byteCount) {
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
                   if (rxDataWriteLow == UART_STOPBITS_1 ||
-                      rxDataWriteLow == UART_STOPBITS_2) {
+                        rxDataWriteLow == UART_STOPBITS_2) {
                      i2cMem[rxData] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
@@ -548,8 +550,8 @@ void receiveData (int byteCount) {
                if (Wire.available()) {
                   rxDataWriteLow = Wire.read();
                   if (rxDataWriteLow == UART_PARITY_NONE ||
-                      rxDataWriteLow == UART_PARITY_EVEN ||
-                      rxDataWriteLow == UART_PARITY_ODD) {
+                        rxDataWriteLow == UART_PARITY_EVEN ||
+                        rxDataWriteLow == UART_PARITY_ODD) {
                      i2cMem[rxData] = rxDataWriteLow;
                      returnType = SUCCESS;
                   }
@@ -643,13 +645,13 @@ void sendData () {
                }
             }
             if (MASK_ADDRESS(i2cPointer) == GPS_READ_RMC) {
-                for (int i = gps_rmc_pointer; (i < GPS_BUFFER_SIZE) && (i < (gps_rmc_pointer + CHUNK_SIZE)); i++) {
-                   Wire.write(gpsBufferRMC[i]);
-                }
-                gps_rmc_pointer = gps_rmc_pointer + CHUNK_SIZE;
-                if (gps_rmc_pointer >= GPS_BUFFER_SIZE) {
-                   gps_rmc_pointer = 0;
-                }
+               for (int i = gps_rmc_pointer; (i < GPS_BUFFER_SIZE) && (i < (gps_rmc_pointer + CHUNK_SIZE)); i++) {
+                  Wire.write(gpsBufferRMC[i]);
+               }
+               gps_rmc_pointer = gps_rmc_pointer + CHUNK_SIZE;
+               if (gps_rmc_pointer >= GPS_BUFFER_SIZE) {
+                  gps_rmc_pointer = 0;
+               }
             }
          }
          break;
@@ -704,28 +706,30 @@ void updateUART (uint8_t socket, uint8_t mode) {
    uint8_t config = databits | stopbits | parity;
 
    if (socket == SOCKET_0) {
-       // Close the SOCKET_0
-       UART_0.end();
-       digitalWrite(PIN_ENABLE_UART_0, LOW);
-       // Clean interrupts
-       i2cMem[MASK_FULL(socket, INT_UART)] = 0x00;
-       if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
-             (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
-             (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
-             (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
-          digitalWrite(PIN_ISR, LOW);
-       }
-       // Initialize TX Buffer 0
-       memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
-       // Initialize RX Buffer 0
-       memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
-       stackPointer0 = 0;
-       readPointer0 = 0;
-       // Reset the available data
-       i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_HIGH)] = 0x00;
-       i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)] = 0x00;
-       i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 0x00;
-       i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 0x00;
+      // Close the SOCKET_0
+      UART_0.end();
+      digitalWrite(PIN_ENABLE_UART_0, LOW);
+      // Clean interrupts
+      i2cMem[MASK_FULL(socket, INT_UART)] = 0x00;
+      if ((i2cMem[MASK_FULL(SOCKET_0, INT_UART)] == 0x00) &&
+            (i2cMem[MASK_FULL(SOCKET_1, INT_UART)] == 0x00) &&
+            (i2cMem[MASK_FULL(SOCKET_0, INT_BUTTON)] == 0x00) &&
+            (i2cMem[MASK_FULL(SOCKET_1, INT_BUTTON)] == 0x00)) {
+         digitalWrite(PIN_ISR, LOW);
+      }
+      // Initialize TX Buffer 0
+      memset(txBuffer0, 0x00, TX_BUFFER_SIZE);
+      // Initialize RX Buffer 0
+      memset(rxBuffer0, 0x00, RX_BUFFER_SIZE);
+      stackPointer0 = 0;
+      readPointer0 = 0;
+      // Reset the available data
+      i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_HIGH)] = 0x00;
+      i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)] = 0x00;
+      i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 0x00;
+      i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 0x00;
+      // Change the mode to OFF
+      i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_OFF;
       if (mode == MODE_ON) {
          // Open the SOCKET_0
          digitalWrite(PIN_ENABLE_UART_0, HIGH);
@@ -757,6 +761,8 @@ void updateUART (uint8_t socket, uint8_t mode) {
       i2cMem[MASK_FULL(socket, FIFO_AVAILABLE_LOW)] = 0x00;
       i2cMem[MASK_FULL(socket, FIFO_TO_READ_HIGH)] = 0x00;
       i2cMem[MASK_FULL(socket, FIFO_TO_READ_LOW)] = 0x00;
+      // Change the mode to OFF
+      i2cMem[MASK_FULL(socket, SOCKET_STATUS)] = MODE_OFF;
       if (mode == MODE_ON) {
          // Open the SOCKET_1
          digitalWrite(PIN_ENABLE_UART_1, HIGH);
