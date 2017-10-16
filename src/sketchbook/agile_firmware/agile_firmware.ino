@@ -26,8 +26,8 @@
  *      a GPS with another UART and some LEDs with        *
  *      the I/O pins.                                     *
  *   Author: David Palomares                              *
- *   Version: 0.2                                         *
- *   Date: February 2017                                  *
+ *   Version: 0.4                                         *
+ *   Date: October 2017                                   *
  **********************************************************/
 
 /*TODO
@@ -56,6 +56,7 @@
 /*** ATMega ***/
 #define SLAVE_ADDRESS 0x14
 #define ATMEGA_CHECK_BYTE 0xDA
+#define ATMEGA_VERSION_BYTE 0x04 //XXX: Changes with each version
 #define I2C_SIZE 256
 #define CHUNK_SIZE 128 // Size of the I2C buffer from <twi.h>
 #define TX_BUFFER_SIZE 1024
@@ -97,6 +98,7 @@
 
 /*** I2C Addresses ***/
 #define ATMEGA_CHECK 0xFF
+#define ATMEGA_VERSION 0xFE
 #define FIFO_TX 0x00
 #define FIFO_RX 0x01
 #define FIFO_AVAILABLE_HIGH 0x02 // Available is an uint16_t
@@ -240,6 +242,7 @@ void setup () {
    // Initialize the I2C memory
    memset(i2cMem, 0x00, I2C_SIZE);
    i2cMem[ATMEGA_CHECK] = ATMEGA_CHECK_BYTE;
+   i2cMem[ATMEGA_VERSION] = ATMEGA_VERSION_BYTE;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_3)] = defBaudrate3;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_2)] = defBaudrate2;
    i2cMem[MASK_FULL(SOCKET_0, SOCKET_BAUDRATE_1)] = defBaudrate1;
@@ -354,6 +357,16 @@ void receiveData (int byteCount) {
 
    if (rxData == ATMEGA_CHECK) {
       // ATMEGA CHECK: Type of request
+      if (byteCount == 1) {
+         // Read request
+         returnType = BYTE;
+         i2cPointer = rxData;
+      } else {
+         // Write request
+         returnType = FAIL;
+      }
+   } else if (rxData == ATMEGA_VERSION) {
+      // ATMEGA VERSION: Type of request
       if (byteCount == 1) {
          // Read request
          returnType = BYTE;
