@@ -22,6 +22,8 @@
 
 # Script vars
 PRINTHELP=false
+FUSES=false
+FIRMWARE=false
 
 # Start
 while [[ $# > 0 ]]
@@ -31,6 +33,10 @@ do
       -f|--file)
          hex_file="$2"
          shift
+         FIRMWARE=true
+         ;;
+      -i|--initial)
+         FUSES=true
          ;;
       -h|--help)
          PRINTHELP=true
@@ -51,15 +57,25 @@ then
    echo -e "\tload_agile_firmware.sh [OPTION]..."
    echo -e "\033[1m\nDESCRIPTION\033[0m"
    echo -e "\tLoads an hex file with the AGILE firmware to the AGILE Maker's Shield.\n"
-   echo -e "\tYou must enable the ICSP switch in your shield and have sudo privileges .\n"
+   echo -e "\tYou must enable the ICSP switch in your shield and have sudo privileges.\n"
    echo -e "\033[1m\t-f, --file\033[0m"
    echo -e "\t\tpath to the hex firmware file."
+   echo -e "\033[1m\t-i, --initial\033[0m"
+   echo -e "\t\tload the initial settings (set the fuses of the microcontroller)."
    echo -e "\033[1m\t-h, --help\033[0m"
    echo -e "\t\tprint this help and exit."
    echo -e ""
    exit
 fi
 
-sudo avrdude -P /dev/spidev0.0 -p atmega2560 -c linuxspi -v -U flash:w:$hex_file
+if [ $FUSES = true ]
+then
+   sudo avrdude -P /dev/spidev0.0 -p atmega2560 -c linuxspi -b 200000 -v -U efuse:w:0xFD:m -U hfuse:w:0xD8:m -U lfuse:w:0xFF:m
+   sleep 1
+fi
 
+if [ $FIRMWARE = true ]
+then
+   sudo avrdude -P /dev/spidev0.0 -p atmega2560 -c linuxspi -b 200000 -v -U flash:w:$hex_file
+fi
 
